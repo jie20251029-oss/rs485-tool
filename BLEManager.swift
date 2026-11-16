@@ -304,7 +304,8 @@ extension BLEManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         peripheral.delegate = self
-        peripheral.discoverServices([serviceUUID])
+        // 发现所有服务（不限定 UUID）
+        peripheral.discoverServices(nil)
     }
 
     func centralManager(_ central: CBCentralManager,
@@ -317,19 +318,39 @@ extension BLEManager: CBCentralManagerDelegate {
 // MARK: - CBPeripheralDelegate
 extension BLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard let svc = peripheral.services?.first(where: { $0.uuid == serviceUUID }) else { return }
-        peripheral.discoverCharacteristics([notifyUUID, writeUUID], for: svc)
+        // 优先 FFF0，否则用第一个服务
+        let svc = peripheral.services?.first(where: { $0.uuid == serviceUUID })
+            ?? peripheral.services?.first
+        guard let s = svc else {
+            appendLog(.system, hex: "", note: "未发现任何服务")
+            state = .idle
+            return
+        }
+        appendLog(.system, hex: "", note: "发现服务 \(s.uuid.uuidString)，查找特征…")
+        peripheral.discoverCharacteristics(nil, for: s)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        var notifyCh: CBCharacteristic?
+        var writeChLocal: CBCharacteristic?
         for ch in service.characteristics ?? [] {
-            if ch.uuid == notifyUUID {
-                peripheral.setNotifyValue(true, for: ch)
-            } else if ch.uuid == writeUUID {
-                writeChar = ch
+            if ch.properties.contains(.notify) || ch.properties.contains(.indicate) {
+                if notifyCh == nil { notifyCh = ch }
+            }
+            if ch.properties.contains(.write) || ch.properties.contains(.writeWithoutResponse) {
+                if writeChLocal == nil { writeChLocal = ch }
             }
         }
-        state = .connected
+        if let n = notifyCh { peripheral.setNotifyValue(true, for: n) }
+        if let w = writeChLocal {
+            writeChar = w
+            state = .connected
+            appendLog(.system, hex: "",
+                      note: "服务 \(service.uuid.uuidString)\n通知 \(notifyCh?.uuid.uuidString ?? "-")\n写入 \(w.uuid.uuidString)")
+        } else {
+            appendLog(.system, hex: "", note: "未找到写入特征")
+            state = .idle
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
