@@ -1,0 +1,67 @@
+name: build-apk
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "android/**"
+      - ".github/workflows/build-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: Accept Android licenses
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Publish APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: CFMOTO 485 诊断工具 APK
+          body: |
+            安卓 APK（debug 密钥签名，直接安装）。
+            - 配合 I6328A 485 蓝牙模块使用
+            - 构建提交：${{ github.sha }}
+          files: android/app/build/outputs/apk/release/app-release.apk
+          overwrite: true
+          make_latest: true
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: CFMOTO 485 诊断工具 APK
+          files: android/**/build/outputs/logs/*.log
+          overwrite: true
