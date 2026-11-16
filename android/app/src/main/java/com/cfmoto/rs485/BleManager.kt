@@ -25,7 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 /** 车辆信息（解析后的可读结果） */
 data class VehicleInfo(
     val vin: String = "",
-    val mileage: String = "",      // 已格式化，如 "12345.6 km"
+    val mileage: String = "",
     val version: String = "",
     val partNo: String = "",
     val supplier: String = "",
@@ -36,7 +36,14 @@ data class VehicleInfo(
                 && partNo.isEmpty() && supplier.isEmpty() && uuid.isEmpty()
 }
 
-/** BLE + 485 帧 + 车辆信息解析 */
+/** 扫描到的设备 */
+data class DiscoveredDevice(
+    val device: BluetoothDevice,
+    val name: String,
+    val rssi: Int
+)
+
+/** BLE + 485 帧 + 车辆信息解析 + 手动选设备 */
 class BleManager(private val context: Context) {
 
     companion object {
@@ -59,14 +66,14 @@ class BleManager(private val context: Context) {
     val logs: StateFlow<List<LogEntry>> = _logs
     private val _liveFrames = MutableStateFlow<Map<Int, ByteArray>>(emptyMap())
     val liveFrames: StateFlow<Map<Int, ByteArray>> = _liveFrames
-
-    /** 车辆信息（自动解析） */
     private val _vehicleInfo = MutableStateFlow(VehicleInfo())
     val vehicleInfo: StateFlow<VehicleInfo> = _vehicleInfo
-
-    /** 正在读取的提示 */
     private val _reading = MutableStateFlow("")
     val reading: StateFlow<String> = _reading
+
+    /** 扫描到的设备列表（用户自己选） */
+    private val _devices = MutableStateFlow<List<DiscoveredDevice>>(emptyList())
+    val devices: StateFlow<List<DiscoveredDevice>> = _devices
 
     private val main = Handler(Looper.getMainLooper())
     private var scanner: BluetoothLeScanner? = null
@@ -90,18 +97,22 @@ class BleManager(private val context: Context) {
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         }
 
+    /** 扫描所有有名字的设备，列在列表里让用户选 */
     @SuppressLint("MissingPermission")
     fun startScan() {
         if (!hasPermissions()) return
+        _devices.value = emptyList()
         _state.value = State.SCANNING
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                val name = result.device.name ?: return
-                if (name.uppercase().contains("6328")) {
-                    stopScan()
-                    _deviceName.value = name
-                    _state.value = State.CONNECTING
-                    connect(result.device)
+                val device = result.device
+                val name = try { device.name } catch (e: SecurityException) { null } ?: return
+                if (name.isBlank()) return
+                val list = _devices.value.toMutableList()
+                if (list.none { it.device.address == device.address }) {
+                    list.add(DiscoveredDevice(device, name, result.rssi))
+                    list.sortByDescending { it.rssi }
+                    _devices.value = list
                 }
             }
         }
@@ -112,9 +123,20 @@ class BleManager(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun stopScan() {
         val cb = scanCallback
-        if (cb != null) scanner?.stopScan(cb)
+        if (cb != null) {
+            try { scanner?.stopScan(cb) } catch (e: SecurityException) { }
+        }
         scanCallback = null
         if (_state.value == State.SCANNING) _state.value = State.IDLE
+    }
+
+    /** 用户手动选择设备连接 */
+    @SuppressLint("MissingPermission")
+    fun connect(scanned: DiscoveredDevice) {
+        stopScan()
+        _deviceName.value = scanned.name
+        _state.value = State.CONNECTING
+        connectGatt(scanned.device)
     }
 
     @SuppressLint("MissingPermission")
@@ -125,7 +147,7 @@ class BleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    private fun connect(device: BluetoothDevice) {
+    private fun connectGatt(device: BluetoothDevice) {
         gatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
             override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) g.discoverServices()
@@ -147,7 +169,6 @@ class BleManager(private val context: Context) {
         })
     }
 
-    /** 构造 485 帧 43 46 [addr] [len] [data] [ck] 45 44 */
     fun buildFrame(addr: Int, data: ByteArray): ByteArray {
         val out = ArrayList<Byte>()
         out.add(0x43); out.add(0x46); out.add(addr.toByte()); out.add(data.size.toByte())
@@ -169,25 +190,20 @@ class BleManager(private val context: Context) {
         addLog(LogEntry.Dir.TX, frame.toHex(), note)
     }
 
-    /** 读 DID: 22 XX YY */
-    fun readDid(didHigh: Int, didLow: Int, addr: Int, label: String) {
-        sendUds(byteArrayOf(0x22, didHigh.toByte(), didLow.toByte()), addr, "读$label")
-    }
-
     /** 一键读全部车辆信息 */
+    @SuppressLint("MissingPermission")
     fun readAllVehicleInfo(addr: Int) {
         _reading.value = "读取中…"
         val items = listOf(
-            byteArrayOf(0x27, 0x01),               // 安全访问（部分车需要）
-            byteArrayOf(0x22, 0xF1.toByte(), 0x90.toByte()), // VIN
-            byteArrayOf(0x22, 0xF2.toByte(), 0x01), // 里程
-            byteArrayOf(0x22, 0xF1.toByte(), 0x95.toByte()), // 版本
-            byteArrayOf(0x22, 0xF1.toByte(), 0x87.toByte()), // 零件号
-            byteArrayOf(0x22, 0xF1.toByte(), 0x8A.toByte()), // 供应商
+            byteArrayOf(0x27, 0x01),
+            byteArrayOf(0x22, 0xF1.toByte(), 0x90.toByte()),
+            byteArrayOf(0x22, 0xF2.toByte(), 0x01),
+            byteArrayOf(0x22, 0xF1.toByte(), 0x95.toByte()),
+            byteArrayOf(0x22, 0xF1.toByte(), 0x87.toByte()),
+            byteArrayOf(0x22, 0xF1.toByte(), 0x8A.toByte()),
         )
         val ch = writeChar ?: return
         val g = gatt ?: return
-        // 逐个发送（间隔 120ms，避免总线冲突）
         var i = 0
         val sender = object : Runnable {
             override fun run() {
@@ -214,7 +230,7 @@ class BleManager(private val context: Context) {
         sendUds(byteArrayOf(0x2E, 0xF1.toByte(), 0x90.toByte()) + b, addr, "写VIN: $vin")
     }
 
-    /** 写总里程: 2E F2 01 + 3 字节大端（输入 km） */
+    /** 写总里程: 2E F2 01 + 3 字节大端 */
     fun writeMileage(km: Long, addr: Int) {
         if (km < 0 || km > 0xFFFFFF) { addLog(LogEntry.Dir.SYS, "", "里程超出范围"); return }
         val data = byteArrayOf(
@@ -250,11 +266,10 @@ class BleManager(private val context: Context) {
         _liveFrames.value = m
     }
 
-    /** 解析 UDS 响应，更新车辆信息 */
     private fun parseUds(p: ByteArray) {
         if (p.size < 3) return
         val sid = p[0].toInt() and 0xFF
-        if (sid != 0x62) return  // 只处理 ReadDataByIdentifier 正响应
+        if (sid != 0x62) return
         val did = ((p[1].toInt() and 0xFF) shl 8) or (p[2].toInt() and 0xFF)
         val body = p.copyOfRange(3, p.size)
         val info = _vehicleInfo.value
@@ -279,7 +294,6 @@ class BleManager(private val context: Context) {
     }
 
     private fun fmtMileage(raw: Int): String {
-        // App 里总里程是 0.1km 单位
         val km = raw / 10.0
         return if (km == km.toLong().toDouble()) "${km.toLong()}.0 km" else "%.1f km".format(km)
     }
