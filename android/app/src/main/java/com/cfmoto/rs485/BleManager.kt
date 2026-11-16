@@ -156,12 +156,35 @@ class BleManager(private val context: Context) {
                 }
             }
             override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
-                val svc = g.getService(SERVICE_UUID) ?: return
-                val notify = svc.getCharacteristic(NOTIFY_UUID)
-                val write = svc.getCharacteristic(WRITE_UUID)
-                if (notify != null) g.setCharacteristicNotification(notify, true)
-                writeChar = write
-                _state.value = State.CONNECTED
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    addLog(LogEntry.Dir.SYS, "", "发现服务失败: $status")
+                    _state.value = State.IDLE
+                    return
+                }
+                // 优先 FFF0，否则遍历所有服务，按 properties 找 write+notify
+                val preferred = g.getService(SERVICE_UUID)
+                val services = if (preferred != null) listOf(preferred) else g.services
+                for (svc in services) {
+                    var n: BluetoothGattCharacteristic? = null
+                    var w: BluetoothGattCharacteristic? = null
+                    for (ch in svc.characteristics) {
+                        val p = ch.properties
+                        if (n == null && ((p and BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0 ||
+                                          (p and BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0)) n = ch
+                        if (w == null && ((p and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0 ||
+                                          (p and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0)) w = ch
+                    }
+                    if (n != null && w != null) {
+                        g.setCharacteristicNotification(n, true)
+                        writeChar = w
+                        _state.value = State.CONNECTED
+                        addLog(LogEntry.Dir.SYS, "",
+                            "服务 ${svc.uuid}\n  通知 ${n.uuid}\n  写入 ${w.uuid}")
+                        return
+                    }
+                }
+                addLog(LogEntry.Dir.SYS, "", "未找到可用的 write/notify 特征")
+                _state.value = State.IDLE
             }
             override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic) {
                 ch.value?.let { feed(it) }
