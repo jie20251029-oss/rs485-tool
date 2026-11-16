@@ -57,6 +57,7 @@ class BleManager(private val context: Context) {
     private var gatt: BluetoothGatt? = null
     private var writeChar: BluetoothGattCharacteristic? = null
     private var adapter: BluetoothAdapter? = null
+    private var scanCallback: ScanCallback? = null
 
     private val rxBuf = ArrayList<Byte>()
 
@@ -79,22 +80,26 @@ class BleManager(private val context: Context) {
     fun startScan() {
         if (!hasPermissions()) return
         _state.value = State.SCANNING
-        scanner?.startScan(object : ScanCallback() {
+        val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val name = result.device.name ?: return
                 if (name.uppercase().contains("6328")) {
-                    scanner?.stopScan()
+                    stopScan()
                     _deviceName.value = name
                     _state.value = State.CONNECTING
                     connect(result.device)
                 }
             }
-        })
+        }
+        scanCallback = cb
+        scanner?.startScan(cb)
     }
 
     @SuppressLint("MissingPermission")
     fun stopScan() {
-        scanner?.stopScan()
+        val cb = scanCallback
+        if (cb != null) scanner?.stopScan(cb)
+        scanCallback = null
         if (_state.value == State.SCANNING) _state.value = State.IDLE
     }
 
