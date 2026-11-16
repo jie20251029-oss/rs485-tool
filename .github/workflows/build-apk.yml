@@ -1,4 +1,4 @@
-name: build-apk
+﻿name: build-apk
 
 on:
   push:
@@ -27,21 +27,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.5'
 
-      - name: Show Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          ls "$ANDROID_HOME" || true
-
       - name: Accept Android licenses
         run: |
-          SDKMANAGER=$(find "$ANDROID_HOME" -name sdkmanager -type f | head -1)
-          echo "sdkmanager=$SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          yes | sdkmanager --licenses > /dev/null || true
 
       - name: Build APK
         working-directory: android
@@ -52,11 +48,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-latest
-          name: CFMOTO 485 诊断工具 APK
+          name: CFMOTO 485 璇婃柇宸ュ叿 APK
           body: |
-            安卓 APK（debug 密钥签名，直接安装）。
-            - 配合 I6328A 485 蓝牙模块使用
-            - 构建提交：${{ github.sha }}
-          files: android/app/build/outputs/apk/release/app-release.apk
+            瀹夊崜 APK锛坉ebug 瀵嗛挜绛惧悕锛岀洿鎺ュ畨瑁咃級銆?            - 閰嶅悎 I6328A 485 钃濈墮妯″潡浣跨敤
+            - 鏋勫缓鎻愪氦锛?{{ github.sha }}
+          files: android/app/build/outputs/apk/release/*.apk
           overwrite: true
           make_latest: true
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: CFMOTO 485 璇婃柇宸ュ叿 APK
+          files: android/**/build/outputs/logs/*.log
+          overwrite: true
