@@ -57,6 +57,7 @@ fun RS485App(activity: ComponentActivity) {
     val info by ble.vehicleInfo.collectAsState()
     val reading by ble.reading.collectAsState()
     val logs by ble.logs.collectAsState()
+    val devices by ble.devices.collectAsState()
 
     var showAdvanced by remember { mutableStateOf(false) }
     var writeVinText by remember { mutableStateOf("") }
@@ -134,7 +135,7 @@ fun RS485App(activity: ComponentActivity) {
                             when (state) {
                                 BleManager.State.CONNECTED -> "断开"
                                 BleManager.State.SCANNING -> "取消"
-                                else -> "连接"
+                                else -> "扫描设备"
                             },
                             color = if (state == BleManager.State.CONNECTED) Color.White else BgTop,
                             fontWeight = FontWeight.Bold
@@ -143,6 +144,49 @@ fun RS485App(activity: ComponentActivity) {
                 }
             }
             Spacer(Modifier.height(14.dp))
+
+            // 设备列表（手动选择）
+            if (state == BleManager.State.SCANNING || devices.isNotEmpty()) {
+                SectionTitle(if (state == BleManager.State.SCANNING) "搜索到的设备" else "设备列表",
+                    Icons.Default.BluetoothSearching)
+                GlassCard {
+                    Column {
+                        if (devices.isEmpty()) {
+                            Text(
+                                if (state == BleManager.State.SCANNING) "正在搜索…" else "未发现设备",
+                                color = Color.White.copy(alpha = 0.35f), fontSize = 13.sp
+                            )
+                        } else {
+                            devices.forEach { dev ->
+                                Surface(
+                                    onClick = { ble.connect(dev) },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color.White.copy(alpha = 0.05f),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                                ) {
+                                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            Modifier.size(34.dp).clip(CircleShape)
+                                                .background(Accent.copy(alpha = 0.15f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.Bluetooth, null, tint = Accent, modifier = Modifier.size(16.dp))
+                                        }
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(dev.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                            Text("信号 ${dev.rssi} dBm", color = Color.White.copy(alpha = 0.35f),
+                                                fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                                        }
+                                        Text("连接", color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+            }
 
             if (state == BleManager.State.CONNECTED) {
                 // ===== 车辆信息 =====
