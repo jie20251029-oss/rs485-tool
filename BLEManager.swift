@@ -2,6 +2,14 @@ import Foundation
 import CoreBluetooth
 import Combine
 
+/// 扫描到的设备
+struct DiscoveredDevice: Identifiable {
+    let id: UUID
+    let name: String
+    let rssi: Int
+    let peripheral: CBPeripheral
+}
+
 /// BLE 连接 I6328A 透传模块 + 485 帧构造/解析 + 数据流
 final class BLEManager: NSObject, ObservableObject {
     private let serviceUUID = CBUUID(string: "0000FFF0-0000-1000-8000-00805F9B34FB")
@@ -16,10 +24,13 @@ final class BLEManager: NSObject, ObservableObject {
     @Published var deviceName: String = ""
     @Published var logs: [LogEntry] = []
     @Published var scanning = false
-    /// 数据流: 地址 -> (数据, 更新计数)
+    /// 扫描到的设备列表（用户自己选）
+    @Published var devices: [DiscoveredDevice] = []
+    /// 数据流: 地址 -> 最新数据
     @Published var liveFrames: [UInt8: LiveFrame] = [:]
 
     private var rxBuffer = Data()
+    private var knownPeripherals: Set<UUID> = []
 
     enum BLEState: Equatable {
         case idle, scanning, connecting, connected
@@ -50,6 +61,8 @@ final class BLEManager: NSObject, ObservableObject {
     // MARK: - 扫描 / 连接
     func startScan() {
         guard central.state == .poweredOn else { return }
+        devices.removeAll()
+        knownPeripherals.removeAll()
         state = .scanning
         scanning = true
         central.scanForPeripherals(withServices: nil, options: nil)
@@ -59,6 +72,20 @@ final class BLEManager: NSObject, ObservableObject {
         central.stopScan()
         scanning = false
         if state == .scanning { state = .idle }
+    }
+
+    /// 用户手动选择设备连接
+    func connect(_ device: DiscoveredDevice) {
+        central.stopScan()
+        scanning = false
+        peripheral_connect(device.peripheral, name: device.name)
+    }
+
+    private func peripheral_connect(_ p: CBPeripheral, name: String) {
+        deviceName = name
+        peripheral = p
+        state = .connecting
+        central.connect(p, options: nil)
     }
 
     func disconnect() {
@@ -162,13 +189,17 @@ extension BLEManager: CBCentralManagerDelegate {
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         let name = peripheral.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? ""
         guard !name.isEmpty else { return }
-        if name.uppercased().contains("6328") {
-            central.stopScan()
-            scanning = false
-            self.peripheral = peripheral
-            deviceName = name
-            state = .connecting
-            central.connect(peripheral, options: nil)
+        // 只加入列表，不自动连接
+        if !knownPeripherals.contains(peripheral.identifier) {
+            knownPeripherals.insert(peripheral.identifier)
+            devices.append(DiscoveredDevice(
+                id: peripheral.identifier,
+                name: name,
+                rssi: RSSI.intValue,
+                peripheral: peripheral
+            ))
+            // 按信号强弱排序
+            devices.sort { $0.rssi > $1.rssi }
         }
     }
 
