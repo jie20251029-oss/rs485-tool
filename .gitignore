@@ -1,0 +1,21 @@
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+
+# Swift Package
+.swiftpm/
+.build/
+
+# XcodeGen 生成的工程（由 project.yml 生成，不入库）
+RS485Tool.xcodeproj/
+
+# 临时
+*.log
