@@ -46,6 +46,9 @@ struct ContentView: View {
                 VStack(spacing: 16) {
                     header
                     connectionCard
+                    if ble.state == .scanning || !ble.devices.isEmpty {
+                        deviceList
+                    }
                     ecuPicker
                     categoryPicker
                     commandGrid
@@ -118,7 +121,7 @@ struct ContentView: View {
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
                 Text(ble.state == .connected ? "已建立 485 通道" :
-                        (ble.scanning ? "正在搜索设备…" : "点击连接开始"))
+                        (ble.scanning ? "正在搜索设备…" : "点击扫描设备"))
                     .font(.system(size: 12, design: .rounded))
                     .foregroundStyle(.white.opacity(0.45))
             }
@@ -130,7 +133,7 @@ struct ContentView: View {
                 default: ble.startScan()
                 }
             } label: {
-                Text(ble.state == .connected ? "断开" : (ble.scanning ? "取消" : "连接"))
+                Text(ble.state == .connected ? "断开" : (ble.scanning ? "取消" : "扫描设备"))
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundStyle(ble.state == .connected ? .white : bgTop)
                     .padding(.horizontal, 20)
@@ -147,6 +150,70 @@ struct ContentView: View {
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.08), lineWidth: 1))
+    }
+
+    // MARK: - 设备列表（手动选择）
+    private var deviceList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(ble.scanning ? "搜索到的设备" : "设备列表",
+                      systemImage: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.6))
+                Spacer()
+                if ble.scanning {
+                    ProgressView().scaleEffect(0.7)
+                }
+            }
+            if ble.devices.isEmpty {
+                Text(ble.scanning ? "正在搜索…" : "未发现设备")
+                    .font(.system(size: 12, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+            } else {
+                ForEach(ble.devices) { dev in
+                    Button {
+                        ble.connect(dev)
+                    } label: {
+                        HStack(spacing: 12) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.white.opacity(0.08))
+                                    .frame(width: 36, height: 36)
+                                Image(systemName: "dot.radiowaves.left.and.right")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(accent)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(dev.name)
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white)
+                                Text("信号 \(dev.rssi) dBm")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.35))
+                            }
+                            Spacer()
+                            Text("连接")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundStyle(accent)
+                        }
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.white.opacity(0.05))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(accent.opacity(0.18), lineWidth: 1)
+                        )
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.08), lineWidth: 1))
     }
 
     // MARK: - ECU 选择
